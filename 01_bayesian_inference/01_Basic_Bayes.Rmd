@@ -1,0 +1,133 @@
+---
+title: "01_Bayesian_Basic"
+author: "Herman Yu"
+date: "2023-03-18"
+output: html_document
+---
+
+# Setup
+
+```{r}
+ROOT <- rprojroot::find_rstudio_root_file()
+setwd(ROOT)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+# generate a random data set of calls and sales numbers
+
+# sample_binom <- function(n, prob){
+#   rbinom(1, n, prob)
+# }
+# 
+# sample_binom <- Vectorize(sample_binom, vectorize.args = "n")
+# 
+# n <- sample.int(200, n = 500, replace = TRUE)
+# 
+# x <- sample_binom(n, prob = 0.08)
+
+# setwd(ROOT)
+# 
+# tibble(
+#   calls = n,
+#   sales = x
+# ) %>% 
+#   write_csv(file = "data/01_bayesian_inference/01_calls_and_sales.csv")
+  
+```
+
+# Introduction
+
+## A Business Problem Example:
+
+Suppose a business sells a product over the telephone. Whenever a 
+potential customer calls the business, they speak with a sales agent who tries 
+to get the customer to purchase the product. For any given call, the agent will 
+either make the sale or not make the sale.
+
+**The Business Problem:** On a given day, a particular sales agent received 
+4 calls and made 0 sales. If the agent receives 100 calls the next day, 
+how many sales do we expect them to make?
+
+## With No Assumptions:
+
+The business agent had 4 calls and converted 0 of them. A crude estimate would 
+be to declare that agent's conversion rate as 0/4 = 0. Therefore, if they were 
+to receive 100 calls the next day, they would convert 
+100 * (0/4) = 0 into sales.
+
+
+## The Frequentist Approach:
+
+We make an assumption that all calls and all agents are the same.
+This assumption is likely to be invalid, because each interaction will have a 
+unique set of differences in the conditions. However, our hope is that with a 
+large enough sample, these individual differences will be drowned out by 
+the aggregate. 
+
+We can thus try to obtain a larger sample of interactions. Consider the 
+following data set. Each row gives the number of calls and number of sales for 
+a particular agent on a particular day. 
+
+(Note that this data set does not 
+contain the most recent interaction of 4 calls and 0 sales.)
+
+```{r}
+setwd(ROOT)
+
+df <- read_csv("data/01_bayesian_inference/01_calls_and_sales.csv")
+
+df %>% head(10)
+```
+
+Since we are assuming that all the interactions are the same, we can derive 
+a "point estimate" for our particular agent by pooling all the data together:
+
+```{r}
+# data together; include 4 calls and 0 sales from most recent day
+df %>% 
+  summarise(
+    total_calls = sum(calls) + 4,
+    total_sales = sum(sales) + 0,
+    estimated_conversion_rate = total_sales/total_calls
+  )
+```
+
+Using this estimated conversion rate, we can make a prediction on the number of
+sales given 100 calls:
+
+```{r}
+# sales = 100 calls * conversion rate
+100 * 0.07838036
+```
+
+In fact, if we assume that any given call will convert with some fixed
+probability $p$, we can even quantify how confident we are in this answer:
+
+```{r}
+total_calls <- 48400
+total_sales <- 3856
+estimated_conversion_rate <- total_sales/total_calls
+
+# Standard error for the mean of a sample of Bernoulli trials
+standard_error <- sqrt(
+  estimated_conversion_rate * (1 - estimated_conversion_rate)/total_calls
+)
+
+# estimated_conversion_rate is a sample mean, so it's distribution
+# is approx. normal by the Central Limit Theorem.
+confidence_interval <- c(
+  estimated_conversion_rate - 1.96 * standard_error,
+  estimated_conversion_rate + 1.96 * standard_error
+)
+
+# The approx. 95% confidence interval of our estimate
+confidence_interval
+```
+
+The key takeaway is that we can obtain very good analysis using our data 
+IF we make assumptions about the nature of how the data is generated. 
+
