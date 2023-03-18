@@ -8,6 +8,7 @@ output: html_document
 # Setup
 
 ```{r}
+options(scipen = 999)
 ROOT <- rprojroot::find_rstudio_root_file()
 setwd(ROOT)
 
@@ -15,6 +16,7 @@ library(readr)
 library(dplyr)
 library(ggplot2)
 ```
+
 ```{r}
 sample_binom <- function(n, prob){
   rbinom(1, n, prob)
@@ -307,8 +309,8 @@ fitted_density <- MASS::fitdistr(conversion_rates,
                                  densfun = dbeta, 
                                  start = list(shape1 = 1, shape2 = 10))
 
-alpha <- fitted_density$estimate["shape1"]
-beta <- fitted_density$estimate["shape2"]
+alpha <- fitted_density$estimate[["shape1"]]
+beta <- fitted_density$estimate[["shape2"]]
 
 alpha
 beta
@@ -439,6 +441,88 @@ the posterior distribution acts as a **compromise**
 between the new hire's Week 48 data (which might be noisy) 
 and our prior beliefs (which might not be well-informed).
 
+## Point Estimates
+
+Bayesian statistics give us posterior distributions, which represent the 
+plausibility of a range of possible conversion rates.
+
+Notice there isn't a single conversion rate that is "correct" or "incorrect" 
+because all conversion rates with non-zero probability are possible.
+This leads to an interesting feature of Bayesian statistics: 
+point estimates no longer make sense!
+Instead, we have a whole range of possible conversion rates.
+
+Nonetheless, most analysis questions will require us to narrow down our answer 
+to a single value. In such cases, there are some natural choices of 
+conversion rates:
+
+1) Posterior mean: the mean of the posterior distribution measures the central 
+tendency of the posterior distribution. This condenses range of plausible 
+conversion rates down into 1 single value.
+
+2) Posterior mode: the mode of the posterior distribution is the 
+conversion rate with the highest density. Note that a density is not the same 
+as a probability. 
+
+3) Posterior medain: the median of the posterior distribution measures the 
+central tendency but using quantiles. This has the effect of washing out the 
+influence from the extreme values in the tail(s).
+
+For our example, recall we had the following situation after updating:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha, beta),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+We can look at the mean, mode, and median of the posterior 
+because we know the posterior is a beta distribution:
+
+```{r}
+calls <- 4
+sales <- 0
+
+# mean of the posterior beta distribution
+(alpha + sales)/(alpha + beta + calls - sales)
+
+# mode
+(alpha + sales - 1)/(alpha + beta + calls - sales - 2)
+
+# median
+(alpha + sales - (1/3))/(alpha + beta + calls - sales - (2/3))
+```
+
+## Credible Intervals
+
+Because our posterior distribution is an actual probability distribution, it is 
+now possible to talk about "the probability" of a range of conversion rates. 
+Every interval defines section of mass under the density, hence every interval 
+of conversion rates defines an actual probability:
+
+```{r}
+# an example of a credible interval
+pbeta(c(0.10, 0.20), shape1 = alpha + sales, shape2 = beta + calls - sales)
+```
+
+This tells us there is a 0.539 - 0.106 = 0.433 chance that the conversion 
+rate is between 0.1 and 0.2, based on the observed data of 4 calls, 0 sales, 
+and our prior beliefs.
+
+Notice that the interpretation is much more straightforward than the analogous 
+concept of confidence intervals in frequentest statistics. Confidence intervals 
+have to be interpreted as the probability that the **methodology** 
+of constructing the interval will contain the "true" conversion rate x% 
+of the time on repeated experiments.
+
+
 ## Choice of Prior
 
 One reason for picking the Beta distribution was because it is conjugate. 
@@ -481,20 +565,34 @@ df %>%
   geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
 ```
 
-```{r}
-prior_mean     <- alpha/(alpha + beta)
-sample_mean    <- 5/90
-posterior_mean <- (alpha + 5)/(alpha + beta + 90 - 5)
-
-prior_mean
-sample_mean
-posterior_mean
-```
-
 The posterior distribution is much more clustered around a conversion rate 
 of approximately 0.08, which is much closer to the 
 sample estimate of 5/90 = 0.0556
 than the prior mean of 0.24856
+
+Consequently, our 1 number summaries also begin to converge together:
+
+```{r}
+calls <- 90
+sales <- 5
+
+# mean of the posterior beta distribution
+(alpha + sales)/(alpha + beta + calls - sales)
+
+# mode
+(alpha + sales - 1)/(alpha + beta + calls - sales - 2)
+
+# median
+(alpha + sales - (1/3))/(alpha + beta + calls - sales - (2/3))
+```
+
+Our credible intervals also become stronger, with an approx. 81% chance 
+that the conversion rate is between 0.05 and 0.12
+
+```{r}
+# an example of a credible interval
+pbeta(c(0.05, 0.12), shape1 = alpha + sales, shape2 = beta + calls - sales)
+```
 
 This example shows that: in the face of overwhelming evidence, the posterior 
 will always move away from the prior in the correct direction.
@@ -508,28 +606,89 @@ posterior converge faster, so there is still important to carefully
 consider appropriate choices of priors. Nontheless, as long as our choice 
 of prior is "roughly correct", the posterior will be "roughly accurate".
 
-## Point Estimates
+## Incorporating Knowledge Outside of Data
 
-Bayesian statistics give us posterior distributions, which represent the 
-plausibility of a range of possible conversion rates.
+The freedom to choose a prior distribution is a celebrated tool in Bayesian 
+statistics because it permits us (the analyst / scientist / statistician) 
+to embed our expert knowledge about the work into the prior distribution.
 
-Notice there isn't a single conversion rate that is "correct" or "incorrect" 
-because all conversion rates with non-zero probability are possible. Instead, 
-there are only conversion rates that have a higher density than others.
+For example, in our business problem, let's suppose the owner told us that 
+the new hire was brought on to handle calls specifically from the West Coast 
+of the United States. The other agents in the data set take calls from both 
+the West Coast and the East Coast. The owner remarks that the West Coast 
+has traditionally been a tougher market and that conversion rates 
+for the West Coast have traditionally hovered around 0.22. 
 
-This leads to an interesting feature of Bayesian statistics: 
-point estimates no longer make sense!
-Instead, we have a whole range of possible conversion rates.
+One way to incorporate this knowledge is to take the prior we previously 
+estimated, and manually shift the mean closer to 0.22.
 
-Nonetheless, most analysis questions will require us to narrow down our answer 
-to a single value. In such cases, there are some natural choices of 
-conversion rates:
+```{r}
+# shape params of previously estimated prior
+alpha
+beta
 
-1) Posterior mean: the mean of the posterior distribution measures the central 
-tendency of the posterior distribution. This condenses range of plausible 
-conversion rates down into 1 single value.
+# mean
+alpha/(alpha + beta)
+```
 
-2) Posterior mode: the mode of the posterior distribution is the 
-conversion rate with the highest density. Note that a density is not the same 
-as a probability. 
+```{r}
+# manually adjust shape params to get something closer to 0.22
+alpha_adj <- alpha - 0.45
+beta_adj <- beta + 0.55
+
+# adjusted mean
+alpha_adj/(alpha_adj + beta_adj)
+```
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha, beta),
+    adj_prior_density = dbeta(conversion_rate, alpha_adj, beta_adj)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1, linetype = "dashed") + 
+  geom_line(mapping = aes(y = adj_prior_density), color = "red", size = 1.5)
+```
+
+We can use this the adjusted curve as a better prior, and compute the posterior 
+beta distribution:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha_adj, beta_adj),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+```{r}
+calls <- 4
+sales <- 0
+
+# mean of the posterior beta distribution
+(alpha_adj + sales)/(alpha_adj + beta_adj + calls - sales)
+
+# mode
+(alpha_adj + sales - 1)/(alpha_adj + beta_adj + calls - sales - 2)
+
+# median
+(alpha_adj + sales - (1/3))/(alpha_adj + beta_adj + calls - sales - (2/3))
+```
+
+```{r}
+# credible interval
+pbeta(c(0.10, 0.20), shape1 = alpha_adj + sales, shape = beta_adj + calls - sales)
+```
+
+Incorporating our business knowledge into the prior has pulled the 1 number 
+summaries closer together and increased the plausibility of 
+the (0.1, 0.2) interval.
 
