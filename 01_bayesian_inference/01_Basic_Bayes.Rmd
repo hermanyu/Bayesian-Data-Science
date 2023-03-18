@@ -23,7 +23,6 @@ sample_binom <- function(n, prob){
 }
 
 sample_binom <- Vectorize(sample_binom, vectorize.args = c("n", "prob"))
-
 ```
 
 ```{r}
@@ -691,4 +690,123 @@ pbeta(c(0.10, 0.20), shape1 = alpha_adj + sales, shape = beta_adj + calls - sale
 Incorporating our business knowledge into the prior has pulled the 1 number 
 summaries closer together and increased the plausibility of 
 the (0.1, 0.2) interval.
+
+
+# The Posterior Predictive Distribution
+
+Recall that our original problem was to make a forecast on the missing sales 
+figure:
+
+```{r}
+df_new_hire
+```
+
+We wanted to achieve this by estimating a conversion rate to use for Week 49. 
+Our Bayesian updating method allowed us to construct a posterior distribution 
+for a range of possible conversion rates
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha_adj, beta_adj),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+We can pick either the mean, mode, or median to use as an estimated conversion 
+rate, then forecast the number of sales made on Week 49:
+
+```{r}
+calls <- 4
+sales <- 0
+
+# mean of the posterior beta distribution
+(alpha_adj + sales)/(alpha_adj + beta_adj + calls - sales)
+
+# mode
+(alpha_adj + sales - 1)/(alpha_adj + beta_adj + calls - sales - 2)
+
+# median
+(alpha_adj + sales - (1/3))/(alpha_adj + beta_adj + calls - sales - (2/3))
+```
+```{r}
+# forecast sales with posterior mean conversion rate
+df_new_hire %>% 
+  mutate(sales = ifelse(is.na(sales), calls * 0.1787407, sales))
+```
+
+A more sophisticated approach is to use computer simulations to construct an 
+entire distribution of sales figures. This simulated distribution is called 
+the **posterior predictive distribution**.
+
+The steps for the simulation are as follows:
+
+1) Sample the posterior distribution: randomly draw a conversion rate based on 
+the probability given by the posterior.
+
+2) Construct the predictive distribution: use the sampled conversion rate as 
+the success probability of a binomial distribution. This will give use a 
+distribution of possible sales figures based on the sampled conversion rate.
+
+3) Sample the predictive distribution: randomly draw a sales figure based on 
+the probability of the predictive distribution.
+
+4) Construct the posterior predictive distribution: save this randomly drawn 
+sales figure in a list. 
+
+Repeating steps 1-4 a large number of times will give us a huge list 
+of simulated sales figures. The list being constructed in step 4 is the 
+posterior predicative distribution and will be a histogram of how likely 
+we are to see a given sales figure.
+
+```{r}
+test_beta <- rbeta(10, shape1 = alpha, shape2 = beta)
+test_beta
+sample_binom(100, test_beta)
+```
+
+
+```{r}
+sample_posterior_predictive <- function(iters = 1000){
+  # sample from the posterior distribution for conversion rates
+  posterior_sample <- rbeta(iters, shape1 = alpha_adj + 0, shape2 = beta_adj + 4 - 0)
+  
+  # plug each conv. rate into a binomial distribution and draw a sales figure
+  sales_sample <- sample_binom(100, posterior_sample)
+  
+  return(sales_sample)
+}
+```
+
+```{r}
+# simulate 50,000 sales figures 
+posterior_predictive <- sample_posterior_predictive(iters = 5e5)
+```
+
+```{r}
+max(posterior_predictive)
+```
+
+
+```{r}
+tibble(
+  simulated_sales = posterior_predictive
+) %>% 
+  ggplot(mapping = aes(simulated_sales)) + 
+  geom_histogram(bins = max(posterior_predictive))
+```
+
+Now, not only do we have a single forecast for sales, we can actually make 
+statements about how likely any given sales figure is. For example, we can say 
+that the new hire's Week 49 sales figure will be more than twice as likely to be
+under 30 sales than it is to be over 30 sales.
+
+
+---
+
 
