@@ -1,0 +1,355 @@
+
+# Setup
+
+```{r}
+ROOT <- rprojroot::find_rstudio_root_file()
+setwd(ROOT)
+getwd()
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+
+df_marketing <- read_csv("data/02_linear_models/advertising.csv")
+```
+
+```{r}
+df_marketing %>% head(10)
+```
+
+# The Data
+
+```{r}
+df_marketing %>% ggpairs()
+```
+
+```{r}
+df_marketing %>% 
+  ggplot(mapping = aes(TV, Sales)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+```
+
+# The Business Problem
+
+What is the specific relationship between Sales and TV spend?
+
+Let's phrase this in a mathematically rigorous way: we believe that Sales is 
+determined (up to some variability) by TV spend; Sales can be deduced from 
+TV spend, up to some random variability.
+
+$$
+\text{Sales}\,\,|\,\,\text{TV} \sim P_{TV}(x)
+$$
+
+Where $P_{TV}$ is some probability distribution that's determined by the level 
+of TV spend. In other words, we are claiming that the distribution will change 
+for different values of TV spend. (I.E. the distributions are a family that's 
+parameterized by TV spend).
+
+```{r}
+tibble(
+  TV = c("$0", "$10", "$20", "$40", "$100", "$200"),
+  Distribution_of_Sales = c("P_0(x)", "P_10(x)", "P_20(x)", "P_40(x)", "P_100(x)", "P_200(x)")
+)
+```
+
+The mathematical question we wish to answer: What is $P_0(x)$, $P_{10}(x)$,...?
+
+How do we answer such a question? Well the "purely" statistical approach is to 
+gather many data points for each level of TV spend. For example we can look at 
+all of the sales figures at exactly $0 of spend and try to build a histogram. 
+
+Unfortunately, our data set does not contain any points with TV at $0.
+
+```{r}
+df_marketing %>% 
+  arrange(TV) %>% 
+  filter(TV <= 10)
+```
+
+We quickly realize the problem with the "purely" statistical approach: TV spend 
+is a continuous variable so it's highly unlikely we will have many repeated 
+data points at some fixed value of TV spend.
+
+In order to do anything useful, we have to supplement the "holes" in our data 
+with assumptions. This allows us to fill in the gaps using probability theory 
+instead. Here are some assumptions that we might make:
+
+1) Shape: Sales, conditional on TV spend, follows a normal distribution. 
+(This assumption may or may not be valid).
+
+$$
+\text{Sales}\,\,|\,\,\text{TV} \sim P_{TV}(x) = N(\mu_{TV}, \sigma_{TV})
+$$
+
+2) Location: the mean $\mu$ is a linear function of TV spend. 
+(This assumption appears to be valid based on the scatterplot).
+
+$$
+\mu_{TV} = \beta_0 + \beta_1\cdot \text{TV}
+$$
+
+3) Spread: the standard deviation $\sigma$ is constant at all levels of TV spend. 
+(This assumption may or may not be valid).
+
+$$
+\sigma_{TV} = \sigma
+$$
+
+
+# Hypothesized Model
+
+The assumptions we make on the distribution lead us to the following 
+hypothesized model:
+
+$$
+\text{Sales} \sim N(\mu, \sigma) \\
+\mu = \beta_0 + \beta_1 \cdot \text{TV}
+$$
+
+Therefore, the explicit relationship between Sales and TV spend is:
+
+$$
+\text{Sales}\,|\,\text{TV} \sim N(\beta_0 + \beta_1 \cdot \text{TV}, \,\,\sigma)
+$$
+
+In other words, the relationship between Sales and TV is dictated entirely by 
+3 parameters:
+
+$$
+\begin{align*}
+\beta_0 &= \,???\\
+\beta_1 &= \,???\\
+\sigma &= \,???
+\end{align*}
+$$
+
+The question now becomes "how do we solve for these parameters?". The act of 
+finding an approximate solution to model parameters is called 
+**fitting the model**. 
+
+# Fitting via Guess and Check
+
+The most simplistic approach is to manually guess the model parameters and 
+see if they look correct. Examining the scatterplot:
+
+```{r}
+df_marketing %>% 
+  ggplot(mapping = aes(TV, Sales)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+```
+
+- The x-intercept seems to be around 7.
+- The slope seems to be (15-10)/(150-50) = 0.05
+- The standard deviation is hard to tell. Let's just guess 1 for now.
+
+So our guesses for the model parameters are:
+$$
+\begin{align*}
+\beta_0 &= 7 \\
+\beta_1 &= 0.05 \\
+\sigma &= 1
+\end{align*}
+$$
+
+Hence our guess for the model is:
+$$
+\text{Sales}\,|\,\text{TV} \sim N(7 + 0.05 \cdot \text{TV}, \,\,1)
+$$
+
+How good or bad is this guess? We can use our model guess to simulate a bunch 
+of sales figures, and compare it with the actual data!
+
+```{r}
+# our guesses for model params
+beta0 <- 7
+beta1 <- 0.05
+sigma <- 1
+
+# the actual TV spend
+tv_spend <- df_marketing$TV
+
+# simulated sales, based on our guesses for model params
+simulated_sales <- rnorm(length(tv_spend), mean = beta0 + beta1 * tv_spend, sd = sigma)
+```
+
+Now we can examine the quality of the guess by looking at the simulated data 
+vs the actual data:
+```{r}
+df_marketing$simulated_sales <- simulated_sales
+
+df_marketing %>% 
+  ggplot(mapping = aes(TV)) + 
+  geom_point(mapping = aes(y = Sales), color = "black") + 
+  geom_point(mapping = aes(y = simulated_sales), color = "red")
+```
+
+The simulated sales (red) actually has the same overall shape as the actual 
+sales (black). 
+
+- The x-intercept of the simulated data seems to be slightly higher than 
+the actual data.
+- The slope of the simulated data seems to be just slightly smaller than the 
+actual data.
+- The spread of the simulated data seems to be smaller than the actual data.
+
+We can adjust our guess now by increasing the slope and spread:
+```{r}
+beta0 <- 6.7
+beta1 <- 0.06
+sigma = 1.8
+
+simulated_sales <- rnorm(length(tv_spend), mean = beta0 + beta1 * tv_spend, sd = sigma)
+
+df_marketing$simulated_sales <- simulated_sales
+
+df_marketing %>% 
+  ggplot(mapping = aes(TV)) + 
+  geom_point(mapping = aes(y = Sales), color = "black") + 
+  geom_point(mapping = aes(y = simulated_sales), color = "red")
+```
+
+Not bad! The simulated sales look almost indistinguishable from 
+the actual sales.
+
+Thus, our "guess" for the relationship between Sales and TV spend is given by:
+$$
+\begin{align*}
+\beta_0 &= 7 \\
+\beta_1 &= 0.06 \\
+\sigma &= 1.8\\
+\end{align*}
+\\
+
+\text{Sales}\,|\,\text{TV} \sim N(7 + 0.06 \cdot \text{TV}, \,\,1.8)
+$$
+
+# Ordinary Least Squares
+
+A more refined approach is to start again with the original problem.
+
+$$
+\text{Sales}\,|\,\text{TV} \sim P_{TV}(x)
+$$
+
+This time, we'll only make the assumption that the expected value of Sales is 
+a linear function:
+
+$$\mathbb{E}[P_{TV}(x)] = \mu_{TV} = \beta_0 + \beta_1\cdot \text{TV}$$
+
+Here, we are assuming that there should be a line that cuts perfectly through 
+the center of the scatter plot; we make no assumptions about how the Sales 
+figures are distributed about this line.
+
+The problem now reduces to finding the line of "best fit"; the more "central" 
+the line is in the scatter plot, the better the fit. This can be done by 
+minimizing the Residual Sum of Squares:
+
+$$RSS = \sum_{i = 1}^{200} [\text{Sales}_i - (\beta_0 + \beta_1 * \text{TV}_i)]^2$$
+
+The R programming language has built-in functionality for fitting linear models 
+using OLS. This is done by calling the `lm` function.
+
+```{r}
+# fit linear model using OLS
+model_sales.lm <- lm(Sales ~ TV, data = df_marketing)
+
+# model summary to view estimated beta0 and beta1
+model_sales.lm$coefficients
+
+```
+
+The estimated parameters are
+
+$$
+\begin{align*}
+\beta_0 &= 6.97 \\
+\beta_1 &= 0.055 \\
+\end{align*}
+$$
+
+which are pretty close to the estimates we obtained via guess and check.
+
+Notice, we never made any assumptions about how the data points were dispersed 
+about the line. The key takeaway is that getting estimates for $\beta_0$ and 
+$\beta_1$ do not require assuming a probability distribution for Sales.
+
+Now suppose we did make an assumption about how the points were dispersed. 
+Specifically, we'll assume:
+
+1) Sales has a constant standard deviation $\sigma$ at all levels of TV spend.
+$$
+\mathbb{V}[\text{Sales}\,\,|\,\,\text{TV}] = \sigma^2
+$$
+
+If we make this assumption, then we can mathematically show that 
+
+$$
+\mathbb{V}[\beta\,\,|\,\,X] = \sigma^2(X^T X)^{-1}
+$$
+
+where:
+
+1) $\beta$ is the vector of coefficients: $\beta = (\beta_0, \beta_1)$
+2) $X$ is the matrix of data: $X = (TV, Sales)$
+
+The actual formula is cool, but we the real takeaway is that we can obtain the 
+variance (and hence standard deviation) for $\beta_0$ and $\beta_1$. Another 
+major takeaway: we are able to get this information without assuming the 
+exact distribution of Sales conditional on TV spend! The only assumption we 
+had to make is that $\sigma$ is constant at all levels of TV spend.
+
+Now, in practice, we don't know the actual value of $\sigma$; we only assumed 
+$\sigma$ was a constant value, not what the value actually is. None the less, 
+we can estimate the value of $\sigma$ by using the data at hand via:
+
+$$\hat{\sigma} = \sqrt{\frac{e^Te}{N-P}}$$
+
+where $e$ is the vector model residuals, $N$ is the number of data points, and 
+$P$ is the number of coefficients.
+
+```{r}
+model_res <- model_sales.lm$residuals
+
+est_sigma <- sqrt(sum(model_res * model_res)/(length(model_res) - 2))
+
+est_sigma
+```
+
+In other words, we estimate the dispersion of Sales around the central line 
+to be approximately 2.296 standard deviations.
+
+If we go a step further and assume that Sales is normally distributed 
+at all levels of TV spend, then:
+
+$$
+\text{Sales}\,|\,\text{TV} \sim N(\beta_0 + \beta_1 \cdot \text{TV}, \,\,\sigma)
+$$
+
+And we can actually obtain the sampling distribution for our coefficient 
+estimates:
+
+$$
+\hat{\beta} \sim N(\beta, \sigma(X^TX)^{-1})
+$$
+
+Thus, assuming that Sales is normally distributed will result in the 
+coefficient estimates also being normally distributed. We can then approximate 
+$\sigma$ using $\hat{\sigma}$ and consequently get a $t$-distribution:
+
+$$
+\frac{(\hat{\beta} - \beta)}{\hat{\sigma}} \sim t(N-P)
+$$
+
+This allows us to compute confidence intervals (and hence also p-values) for 
+our coefficient estimates:
+
+```{r}
+summary(model_sales.lm)
+```
+
+
+
