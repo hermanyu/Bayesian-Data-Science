@@ -1,0 +1,811 @@
+---
+title: "01_Bayesian_Basic"
+author: "Herman Yu"
+date: "2023-03-18"
+output: html_document
+---
+
+# Setup
+
+```{r}
+options(scipen = 999)
+ROOT <- rprojroot::find_rstudio_root_file()
+setwd(ROOT)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+sample_binom <- function(n, prob){
+  rbinom(1, n, prob)
+}
+
+sample_binom <- Vectorize(sample_binom, vectorize.args = c("n", "prob"))
+```
+
+```{r}
+# This code chunk generates some dummy data to be used
+
+# agents <- c(
+#   rep("Emily", 52),
+#   rep("Aaron", 52),
+#   rep("Madeleine", 52),
+#   rep("Sam", 52),
+#   rep("Amy", 52)
+# )
+# 
+# df <- tibble(
+#   agent = agents
+# ) %>% 
+#   group_by(agent) %>% 
+#   mutate(
+#     week_of_year = 1:52
+#   ) %>% 
+#   ungroup() %>% 
+#   select(week_of_year, everything()) %>% 
+#   arrange(week_of_year, agent)
+# 
+# df$calls <- sample.int(100, 260, replace = TRUE)
+# 
+# df <- df %>% 
+#   mutate(
+#     agent_prob = case_when(
+#       agent == "Emily" ~ 0.38,
+#       agent == "Aaron" ~ 0.3,
+#       agent == "Madeleine" ~ 0.45,
+#       agent == "Amy" ~ 0.27,
+#       agent == "Sam" ~ 0.22
+#     ),
+#     week_prob = case_when(
+#       week_of_year <= 13 ~ 0.6,
+#       week_of_year <= 26 ~ 0.8,
+#       week_of_year <= 39 ~ 0.7,
+#       week_of_year <= 52 ~ 0.88
+#     ),
+#     
+#     sales = sample_binom(n = calls, prob = agent_prob * week_prob)
+#   )
+# 
+# df
+# 
+# setwd(ROOT)
+# 
+# df %>% select(
+#   week_of_year, agent, calls, sales
+# ) %>% 
+#   write_csv(file = "data/01_bayesian_inference/01_calls_and_sales.csv")
+```
+
+# Introduction
+
+## A Business Problem Example:
+
+Suppose a business sells a product over the telephone. Whenever a 
+potential customer calls the business, they speak with a sales agent who tries 
+to get the customer to purchase the product. For any given call, the agent will 
+either make the sale or not make the sale.
+
+**The Business Problem:** A newly hired sales agent received 
+4 calls and made 0 sales in their first week. If the new agent 
+receives 100 calls the next week, how many sales do we expect them to make?
+
+```{r}
+df_new_hire = tibble(
+  agent = c("Herman", "Herman"),
+  week_of_year = c(48, 49),
+  calls = c(4, 100),
+  sales = c(0, NA)
+)
+
+df_new_hire
+```
+
+
+## With Minimal Assumptions:
+
+The most elementary assumption we can make is that the agent's interactions 
+next week will be of the same nature as the agent's interactions this week. 
+We can then use the results fromt he current week to forecast the number of 
+sales that will be made in the coming week.
+
+The business agent had 4 calls and converted 0 of them. Absent any other 
+assumptions, the only estimate we can make on the agent's conversion rate is 
+0/4 = 0. 
+
+Therefore, if they were to receive 100 calls the next week, they would convert 
+100 * (0/4) = 0 into sales.
+
+```{r}
+# fill in missing sales figures by using conversion rate = 0/4
+df_new_hire %>% 
+  mutate(
+    sales = ifelse(is.na(sales), (0/4) * calls, sales)
+  )
+```
+
+
+## A Frequentist Approach:
+
+We make an assumption that all calls and all agents are the same.
+Note that each interaction will have a unique set of differences 
+in the conditions. However, our hope is that with a large enough sample, 
+these individual differences will be drowned out in the aggregate. 
+
+We can thus try to obtain a larger sample of interactions. Consider the 
+following data set. Each row gives the number of calls and number of sales for 
+a particular agent on a particular day. 
+
+(Note that this data set does not 
+contain the most recent interaction of 4 calls and 0 sales.)
+
+```{r}
+setwd(ROOT)
+
+df <- read_csv("data/01_bayesian_inference/01_calls_and_sales.csv") %>% 
+  rbind(filter(df_new_hire))
+
+df %>% tail(10)
+```
+
+Since we are assuming that all the interactions are the same, we can derive 
+a "point estimate" for our particular agent by pooling all the data together:
+
+```{r}
+# data together; include 4 calls and 0 sales from most recent day
+df %>% 
+  summarise(
+    total_calls = sum(calls, na.rm = T),
+    total_sales = sum(sales, na.rm = T),
+    estimated_conversion_rate = total_sales/total_calls
+  )
+```
+
+Using this estimated conversion rate, we can make a forecast 
+on the newly hired agent's sales figures
+
+```{r}
+df_new_hire %>% 
+  mutate(
+    sales = ifelse(is.na(sales), 0.2437486 * calls, sales)
+  )
+```
+
+In fact, if we assume that any given call will always convert with some fixed
+probability $p$, we can even quantify how confident we are in this answer:
+
+```{r}
+total_calls <- 13693
+total_sales <- 3363
+estimated_conversion_rate <- total_sales/total_calls
+
+# Standard error for the mean of a sample of Bernoulli trials
+standard_error <- sqrt(
+  estimated_conversion_rate * (1 - estimated_conversion_rate)/total_calls
+)
+
+# estimated_conversion_rate is a sample mean, so it's distribution
+# is approx. normal by the Central Limit Theorem.
+confidence_interval <- c(
+  estimated_conversion_rate - 1.96 * standard_error,
+  estimated_conversion_rate + 1.96 * standard_error
+)
+
+# The approx. 95% confidence interval of our estimate
+confidence_interval
+```
+
+## A More Refined Approach
+
+Now, we can try to refine our answer by making a slightly more 
+realistic assumption. Instead of assuming that all calls must convert with 
+a fixed probability $p$, we can instead relax the assumption and assume that 
+only calls on the same week convert with a fixed probability $p$.
+
+We can estimate the conversion rate for Week 49 by pooling the Week 49 calls 
+across all 5 agents
+
+```{r}
+df %>% 
+  filter(week_of_year == 49, agent != "Herman") %>% 
+  summarise(
+    total_calls = sum(calls, na.rm = T),
+    total_sales = sum(sales, na.rm = T),
+    estimated_conversion_rate_week49 = total_sales/total_calls
+  )
+```
+
+We can then use the Week 49 conversion rate to forecast the new hire's Week 49 
+sales: 
+
+```{r}
+df_new_hire %>% 
+  mutate(
+    sales = ifelse(week_of_year == 49, calls * 0.3262032, sales)
+  )
+```
+
+# The Bayesian Approach
+
+Let's begin by taking a look at the histogram of conversion rates for each row 
+of the data set. Recall each row corresponds to a specific agent on a specific 
+week of the year.
+
+```{r}
+df <- df %>% 
+  filter(!agent == "Herman")
+```
+
+```{r}
+conversion_rates <- df %>% 
+  transmute(
+    conversion_rate = sales/calls
+  ) %>%
+  pull()
+
+conversion_rates <- conversion_rates[conversion_rates != 0]
+
+tibble(
+  conversion_rate = conversion_rates
+) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram() + 
+  geom_vline(xintercept = mean(conversion_rates), color = "blue", size = 1.5)
+```
+
+Note that the x-axis are the possible range of conversion rates, 
+while the height of the bars is how often a range of conversion rates appears.
+
+The mean of the histogram seems to be around 0.25, let's take a closer look:
+
+```{r}
+mean(conversion_rates)
+```
+
+The mean of this histogram is pretty close to the conversion rate estimated 
+by pooling all the rows together.
+
+What we want to do is use this histogram along with the new hire's first week 
+performance to estimate the new hire's conversion rate for Week 49. In order to 
+do this, we fit a density function to the histogram and then compute the 
+**posterior distribution** to get an estimate for the new hires conversion rate.
+
+## The Prior Distribution
+
+We can choose any family of density functions to fit the histogram. For this 
+example, we will choose the **Beta family** (for reasons explained very soon).
+
+A **Beta distribution** is any function of the following form:
+
+$$
+\text{Beta}(x) = \frac{x^{\alpha-1}(1-x)^{\beta-1}}{B(\alpha,\beta)}
+$$
+
+The parameters $\alpha$ and $\beta$ are called the shape parameters, and their 
+values determine the "shape" of the Beta function. The denominator 
+
+$$B(\alpha, \beta)$$
+
+is just a constant value determined by whatever $\alpha$ and $\beta$ are. The 
+mean of the beta distribution is given by the following formula:
+
+$$\mathbb{E}[\text{Beta}] = \frac{\alpha}{\alpha + \beta}$$
+
+To fit a Beta distribution to our histogram, we just need to find the shape 
+parameters $\alpha$ and $\beta$ that leads to a "curve of best fit". The 
+correct shape parameters can be computed using Maximum Likelihood Estimation, 
+ie gradient ascent of the likelihood function. 
+
+Thankfully, the `MASS` package has a pre-built funciton that can 
+find the $\alpha$ and $\beta$ of best fit:
+
+```{r}
+library(MASS)
+
+fitted_density <- MASS::fitdistr(conversion_rates, 
+                                 densfun = dbeta, 
+                                 start = list(shape1 = 1, shape2 = 10))
+
+alpha <- fitted_density$estimate[["shape1"]]
+beta <- fitted_density$estimate[["shape2"]]
+
+alpha
+beta
+```
+
+Our fitted Beta distribution is the curve given by the function:
+
+$$\text{Beta}(x) = \frac{x^{4.21 - 1}(1-x)^{12.73 - 1}}{B(4.21, 12.73)}$$
+
+Again, $x$ here is a possible conversion rate. The Beta function is telling us 
+"how plausible" any given conversion rate is.
+
+We can evaluate the fit visually by overlaying the fitted Beta function with 
+the density histogram:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    beta_density = dbeta(conversion_rate, alpha, beta)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = beta_density), color = "red", size = 1.5)
+```
+
+Not bad!
+
+## The Posterior Distribution
+
+The main power of Bayesian statistics is the ability to update the prior 
+distribution by incorporating new data. Our new data point is the new hire's 
+call and sales numbers for week 48.
+
+```{r}
+df_new_hire %>% 
+  filter(week_of_year == 48)
+```
+
+To update the prior distribution, we use Bayes's Theorem:
+
+$$
+P(\text{conversion rate} \,\,|\,\, \text{calls = 4}, \text{sales = 0}) 
+= \frac{
+  P(\text{calls = 4}, \text{sales = 0}\,\,|\,\,\text{conversion rate}) \cdot 
+  P(\text{conversion rate})
+  }{P(\text{calls = 4}, \text{sales = 0})}
+$$
+
+The distribution on the left-hand side is called the **posterior distribution** 
+and represents the how plausible a given conversion rate is, based on new data. 
+
+Notice that the posterior distribution is a function of the **likelihood** 
+
+$$
+P(\text{calls = 4}, \text{sales = 0}\,\,|\,\,\text{conversion rate})
+$$
+as well as our original belief in that specific conversion rate
+
+$$
+P(\text{conversion rate})
+$$
+
+Our original belief in the conversion rate is given by our prior distribution, 
+so we just have:
+
+$$
+P(\text{conversion rate} \,\,|\,\, \text{calls = 4}, \text{sales = 0}) 
+= \frac{
+  P(\text{calls = 4}, \text{sales = 0}\,\,|\,\,\text{conversion rate}) \cdot 
+  \text{Beta}(\alpha, \beta)
+  }{P(\text{calls = 4}, \text{sales = 0})}
+$$
+
+Generally speaking, the explicit functional form of the posterior distribution 
+is incredibly hard to solve for. However, the rise of computing power has made 
+it possible to solve for the posterior distribution by running a large number 
+of computer simulations (hence why Bayesian stats has surged in popularity in 
+the modern day).
+
+Luckily for us, we don't need to run computer simulations to solve for the 
+posterior distribution. This is because the Beta distribution has a property 
+known as **conjugacy**. Specifically, if our prior is a Beta distribution 
+
+$$
+P(\text{conversion rate}) = \text{Beta}(\alpha,\beta)
+$$
+
+then we can mathematically prove that the posterior will also be 
+a beta distribution of the following form:
+
+$$
+P(\text{conversion rate} \,\,|\,\, \text{calls = 4}, \text{sales = 0}) 
+= \text{Beta}(\alpha + \text{sales}, \alpha + \beta + \text{sales} - \text{calls})
+$$
+
+This is one of the main reasons why we chose the Beta distribution to fit our 
+histogram of prior conversion rates.
+
+Let's visually compare the posterior distribution against the prior:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha, beta),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+The red curve is our prior distribution and represents our initial belief in 
+the plausibility of each of the conversion rates on the x-axis. 
+
+The blue curve is our posterior distribution and represents our updated beliefs. 
+Notice that the posterior is more concentrated on the lower-end 
+of the conversion rates. This is because the new hire's Week 48 performance of 
+4 calls and 0 sales shows evidence that the conversion rate should be lower 
+than we first expected.
+
+At the same time, the blue curve is not concentrated near 0. This is because 
+our prior (original belief) is acting as ballast against the new hire's Week 48 
+performance. This gives us the central tenet of Bayesian theory:
+the posterior distribution acts as a **compromise** 
+between the new hire's Week 48 data (which might be noisy) 
+and our prior beliefs (which might not be well-informed).
+
+## Point Estimates
+
+Bayesian statistics give us posterior distributions, which represent the 
+plausibility of a range of possible conversion rates.
+
+Notice there isn't a single conversion rate that is "correct" or "incorrect" 
+because all conversion rates with non-zero probability are possible.
+This leads to an interesting feature of Bayesian statistics: 
+point estimates no longer make sense!
+Instead, we have a whole range of possible conversion rates.
+
+Nonetheless, most analysis questions will require us to narrow down our answer 
+to a single value. In such cases, there are some natural choices of 
+conversion rates:
+
+1) Posterior mean: the mean of the posterior distribution measures the central 
+tendency of the posterior distribution. This condenses range of plausible 
+conversion rates down into 1 single value.
+
+2) Posterior mode: the mode of the posterior distribution is the 
+conversion rate with the highest density. Note that a density is not the same 
+as a probability. 
+
+3) Posterior medain: the median of the posterior distribution measures the 
+central tendency but using quantiles. This has the effect of washing out the 
+influence from the extreme values in the tail(s).
+
+For our example, recall we had the following situation after updating:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha, beta),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+We can look at the mean, mode, and median of the posterior 
+because we know the posterior is a beta distribution:
+
+```{r}
+calls <- 4
+sales <- 0
+
+# mean of the posterior beta distribution
+(alpha + sales)/(alpha + beta + calls - sales)
+
+# mode
+(alpha + sales - 1)/(alpha + beta + calls - sales - 2)
+
+# median
+(alpha + sales - (1/3))/(alpha + beta + calls - sales - (2/3))
+```
+
+## Credible Intervals
+
+Because our posterior distribution is an actual probability distribution, it is 
+now possible to talk about "the probability" of a range of conversion rates. 
+Every interval defines section of mass under the density, hence every interval 
+of conversion rates defines an actual probability:
+
+```{r}
+# an example of a credible interval
+pbeta(c(0.10, 0.20), shape1 = alpha + sales, shape2 = beta + calls - sales)
+```
+
+This tells us there is a 0.539 - 0.106 = 0.433 chance that the conversion 
+rate is between 0.1 and 0.2, based on the observed data of 4 calls, 0 sales, 
+and our prior beliefs.
+
+Notice that the interpretation is much more straightforward than the analogous 
+concept of confidence intervals in frequentest statistics. Confidence intervals 
+have to be interpreted as the probability that the **methodology** 
+of constructing the interval will contain the "true" conversion rate x% 
+of the time on repeated experiments.
+
+
+## Choice of Prior
+
+One reason for picking the Beta distribution was because it is conjugate. 
+Another reason is because the Beta distribution ranges between 
+0 and 1 (exclusive); this makes the Beta distribution an appropriate choice 
+for modeling conversion rates.
+
+Nonetheless, a natural question arises about which distributions are valid 
+when choosing a prior. As it turns out, there is no mathematically "right" or 
+"wrong" choice when choosing a prior. This is because updating to the posterior 
+will always move the prior distribution in correct direction.
+
+Let's pretend that the new hire's Week 48 data was actually much stronger:
+
+```{r}
+df_new_hire %>% 
+  filter(week_of_year == 48) %>% 
+  mutate(
+    calls = 90,
+    sales = 5
+  )
+```
+
+With 90 calls and still only 5 sales, this data point would provide pretty 
+strong evidence that the new hire has a low conversion rate.
+
+Let's see what would happen if we updated our original prior using this stronger 
+evidence:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha, beta),
+    posterior_density = dbeta(conversion_rate, alpha + 5, beta + 90 - 5)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+The posterior distribution is much more clustered around a conversion rate 
+of approximately 0.08, which is much closer to the 
+sample estimate of 5/90 = 0.0556
+than the prior mean of 0.24856
+
+Consequently, our 1 number summaries also begin to converge together:
+
+```{r}
+calls <- 90
+sales <- 5
+
+# mean of the posterior beta distribution
+(alpha + sales)/(alpha + beta + calls - sales)
+
+# mode
+(alpha + sales - 1)/(alpha + beta + calls - sales - 2)
+
+# median
+(alpha + sales - (1/3))/(alpha + beta + calls - sales - (2/3))
+```
+
+Our credible intervals also become stronger, with an approx. 81% chance 
+that the conversion rate is between 0.05 and 0.12
+
+```{r}
+# an example of a credible interval
+pbeta(c(0.05, 0.12), shape1 = alpha + sales, shape2 = beta + calls - sales)
+```
+
+This example shows that: in the face of overwhelming evidence, the posterior 
+will always move away from the prior in the correct direction.
+
+In fact, it is possible to show that the posterior distribution will always 
+converge to the "ground truth" as we take more and more samples, irregardless 
+of the original choice of prior.
+
+That being said: priors which are closer to the ground truth will make the 
+posterior converge faster, so there is still important to carefully 
+consider appropriate choices of priors. Nontheless, as long as our choice 
+of prior is "roughly correct", the posterior will be "roughly accurate".
+
+## Incorporating Knowledge Outside of Data
+
+The freedom to choose a prior distribution is a celebrated tool in Bayesian 
+statistics because it permits us (the analyst / scientist / statistician) 
+to embed our expert knowledge about the work into the prior distribution.
+
+For example, in our business problem, let's suppose the owner told us that 
+the new hire was brought on to handle calls specifically from the West Coast 
+of the United States. The other agents in the data set take calls from both 
+the West Coast and the East Coast. The owner remarks that the West Coast 
+has traditionally been a tougher market and that conversion rates 
+for the West Coast have traditionally hovered around 0.22. 
+
+One way to incorporate this knowledge is to take the prior we previously 
+estimated, and manually shift the mean closer to 0.22.
+
+```{r}
+# shape params of previously estimated prior
+alpha
+beta
+
+# mean
+alpha/(alpha + beta)
+```
+
+```{r}
+# manually adjust shape params to get something closer to 0.22
+alpha_adj <- alpha - 0.45
+beta_adj <- beta + 0.55
+
+# adjusted mean
+alpha_adj/(alpha_adj + beta_adj)
+```
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha, beta),
+    adj_prior_density = dbeta(conversion_rate, alpha_adj, beta_adj)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1, linetype = "dashed") + 
+  geom_line(mapping = aes(y = adj_prior_density), color = "red", size = 1.5)
+```
+
+We can use this the adjusted curve as a better prior, and compute the posterior 
+beta distribution:
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha_adj, beta_adj),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+```{r}
+calls <- 4
+sales <- 0
+
+# mean of the posterior beta distribution
+(alpha_adj + sales)/(alpha_adj + beta_adj + calls - sales)
+
+# mode
+(alpha_adj + sales - 1)/(alpha_adj + beta_adj + calls - sales - 2)
+
+# median
+(alpha_adj + sales - (1/3))/(alpha_adj + beta_adj + calls - sales - (2/3))
+```
+
+```{r}
+# credible interval
+pbeta(c(0.10, 0.20), shape1 = alpha_adj + sales, shape = beta_adj + calls - sales)
+```
+
+Incorporating our business knowledge into the prior has pulled the 1 number 
+summaries closer together and increased the plausibility of 
+the (0.1, 0.2) interval.
+
+
+# The Posterior Predictive Distribution
+
+Recall that our original problem was to make a forecast on the missing sales 
+figure:
+
+```{r}
+df_new_hire
+```
+
+We wanted to achieve this by estimating a conversion rate to use for Week 49. 
+Our Bayesian updating method allowed us to construct a posterior distribution 
+for a range of possible conversion rates
+
+```{r}
+df %>% 
+  mutate(
+    conversion_rate = sales/calls,
+    prior_density = dbeta(conversion_rate, alpha_adj, beta_adj),
+    posterior_density = dbeta(conversion_rate, alpha + 0, beta + 4 - 0)
+  ) %>% 
+  ggplot(mapping = aes(conversion_rate)) + 
+  geom_histogram(mapping = aes(y = ..density..)) + 
+  geom_line(mapping = aes(y = prior_density), color = "red", size = 1.5) + 
+  geom_line(mapping = aes(y = posterior_density), color = "blue", size = 1.5)
+```
+
+We can pick either the mean, mode, or median to use as an estimated conversion 
+rate, then forecast the number of sales made on Week 49:
+
+```{r}
+calls <- 4
+sales <- 0
+
+# mean of the posterior beta distribution
+(alpha_adj + sales)/(alpha_adj + beta_adj + calls - sales)
+
+# mode
+(alpha_adj + sales - 1)/(alpha_adj + beta_adj + calls - sales - 2)
+
+# median
+(alpha_adj + sales - (1/3))/(alpha_adj + beta_adj + calls - sales - (2/3))
+```
+```{r}
+# forecast sales with posterior mean conversion rate
+df_new_hire %>% 
+  mutate(sales = ifelse(is.na(sales), calls * 0.1787407, sales))
+```
+
+A more sophisticated approach is to use computer simulations to construct an 
+entire distribution of sales figures. This simulated distribution is called 
+the **posterior predictive distribution**.
+
+The steps for the simulation are as follows:
+
+1) Sample the posterior distribution: randomly draw a conversion rate based on 
+the probability given by the posterior.
+
+2) Construct the predictive distribution: use the sampled conversion rate as 
+the success probability of a binomial distribution. This will give use a 
+distribution of possible sales figures based on the sampled conversion rate.
+
+3) Sample the predictive distribution: randomly draw a sales figure based on 
+the probability of the predictive distribution.
+
+4) Construct the posterior predictive distribution: save this randomly drawn 
+sales figure in a list. 
+
+Repeating steps 1-4 a large number of times will give us a huge list 
+of simulated sales figures. The list being constructed in step 4 is the 
+posterior predicative distribution and will be a histogram of how likely 
+we are to see a given sales figure.
+
+```{r}
+test_beta <- rbeta(10, shape1 = alpha, shape2 = beta)
+test_beta
+sample_binom(100, test_beta)
+```
+
+
+```{r}
+sample_posterior_predictive <- function(iters = 1000){
+  # sample from the posterior distribution for conversion rates
+  posterior_sample <- rbeta(iters, shape1 = alpha_adj + 0, shape2 = beta_adj + 4 - 0)
+  
+  # plug each conv. rate into a binomial distribution and draw a sales figure
+  sales_sample <- sample_binom(100, posterior_sample)
+  
+  return(sales_sample)
+}
+```
+
+```{r}
+# simulate 50,000 sales figures 
+posterior_predictive <- sample_posterior_predictive(iters = 5e5)
+```
+
+```{r}
+max(posterior_predictive)
+```
+
+
+```{r}
+tibble(
+  simulated_sales = posterior_predictive
+) %>% 
+  ggplot(mapping = aes(simulated_sales)) + 
+  geom_histogram(bins = max(posterior_predictive))
+```
+
+Now, not only do we have a single forecast for sales, we can actually make 
+statements about how likely any given sales figure is. For example, we can say 
+that the new hire's Week 49 sales figure will be more than twice as likely to be
+under 30 sales than it is to be over 30 sales.
+
+
+---
+
+
