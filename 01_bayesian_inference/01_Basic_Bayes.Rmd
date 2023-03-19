@@ -106,7 +106,7 @@ df_new_hire
 ## With Minimal Assumptions:
 
 The most elementary assumption we can make is that the agent's interactions 
-next week will be of the same nature to the agent's interactions this week. 
+next week will be of the same nature as the agent's interactions this week. 
 We can then use the results fromt he current week to forecast the number of 
 sales that will be made in the coming week.
 
@@ -198,14 +198,13 @@ confidence_interval
 
 ## A More Refined Approach
 
-Now, we can try to refine our answer by making a slighly more 
+Now, we can try to refine our answer by making a slightly more 
 realistic assumption. Instead of assuming that all calls must convert with 
 a fixed probability $p$, we can instead relax the assumption and assume that 
 only calls on the same week convert with a fixed probability $p$.
 
 We can estimate the conversion rate for Week 49 by pooling the Week 49 calls 
 across all 5 agents
-
 
 ```{r}
 df %>% 
